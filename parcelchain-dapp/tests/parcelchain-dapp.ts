@@ -83,4 +83,30 @@ describe("parcelchain-dapp", () => {
     expect(packageAccount.status).to.eql({ registered: {} }); // Assuming PackageStatus is an enum
     expect(packageAccount.id.toString()).to.eql(packageId.toString());
   });
+
+  it("creates a carrier successfully", async () => {
+    // Generate a new carrier PDA
+    const [carrierPDA] = anchor.web3.PublicKey.findProgramAddressSync(
+      [Buffer.from("carrier"), provider.wallet.publicKey.toBuffer()],
+      program.programId
+    );
+
+    // Create carrier with valid parameters
+    const initialReputation = 100; // Starting reputation
+
+    const tx = await program.methods
+      .createCarrier(initialReputation)
+      .accounts({
+        carrier: carrierPDA,
+        authority: provider.wallet.publicKey,
+        system_program: anchor.web3.SystemProgram.programId,
+      })
+      .rpc();
+
+    // Verify carrier state
+    const carrierAccount = await program.account.carrier.fetch(carrierPDA);
+    expect(carrierAccount.authority.toString()).to.eql(provider.wallet.publicKey.toString());
+    expect(carrierAccount.reputation).to.eql(initialReputation);
+    expect(carrierAccount.completedDeliveries).to.eql(0);
+  });
 });
