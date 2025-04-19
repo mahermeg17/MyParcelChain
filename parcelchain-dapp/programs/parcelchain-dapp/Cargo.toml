@@ -9,12 +9,17 @@ crate-type = ["cdylib", "lib"]
 name = "parcelchain_dapp"
 
 [features]
-default = []
-cpi = ["no-entrypoint"]
 no-entrypoint = []
 no-idl = []
 no-log-ix-name = []
-idl-build = ["anchor-lang/idl-build"]
+cpi = ["no-entrypoint"]
+default = []
+idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
 
 [dependencies]
 anchor-lang = "0.30.1"
+anchor-spl = "0.30.1"
+solana-program = "1.18.26"
+
+[dev-dependencies]
+anchor-lang = { version = "0.30.1", features = ["init-if-needed", "idl-build"] }

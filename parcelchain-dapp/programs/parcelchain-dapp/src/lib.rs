@@ -1,7 +1,14 @@
+#![feature(trivial_bounds)]
 use anchor_lang::prelude::*;
+use anchor_spl::{
+    associated_token::AssociatedToken,
+    token::{Mint, Token, TokenAccount},
+};
 
 declare_id!("3mG95ZAAcoJdwsnufkcyo1hSivS1cD7R4rvekyoLbZzm");
 
+mod state;
+pub use state::*;
 
 /// ParcelChain program module containing all instructions
 #[program]
@@ -105,6 +112,39 @@ pub mod parcelchain_dapp {
         Ok(())
     }
 
+    /// Creates a new escrow account for the package
+    /// 
+    /// # Arguments
+    /// * `ctx` - Context containing the escrow, sender, and package accounts
+    /// * `amount` - Amount of tokens to be transferred to the escrow
+    /// 
+    /// # Errors
+    /// Returns an error if the escrow account cannot be initialized
+    pub fn create_escrow(
+        ctx: Context<CreateEscrow>,
+        amount: u64,
+    ) -> Result<()> {
+        let escrow = &mut ctx.accounts.escrow;
+        escrow.amount = amount;
+        escrow.package = ctx.accounts.package.key();
+        escrow.carrier = ctx.accounts.package.carrier;
+        escrow.bump = ctx.bumps.escrow;
+
+        anchor_spl::token::transfer(
+            CpiContext::new(
+                ctx.accounts.token_program.to_account_info(),
+                anchor_spl::token::Transfer {
+                    from: ctx.accounts.sender_token.to_account_info(),
+                    to: ctx.accounts.escrow_token.to_account_info(),
+                    authority: ctx.accounts.sender.to_account_info(),
+                },
+            ),
+            amount,
+        )?;
+
+        Ok(())
+    }
+
     /// Completes a package delivery and distributes payment
     /// 
     /// # Arguments
@@ -116,49 +156,57 @@ pub mod parcelchain_dapp {
     /// - Carrier is not authorized
     /// - Payment transfer fails
     pub fn complete_delivery(ctx: Context<CompleteDelivery>) -> Result<()> {
-        // Get all immutable references first
-        let carrier_key = ctx.accounts.carrier.key();
-        let carrier_account_info = ctx.accounts.carrier.to_account_info();
-        let escrow_account_info = ctx.accounts.escrow.to_account_info();
-        let platform_account_info = ctx.accounts.platform.to_account_info();
-        let system_program_info = ctx.accounts.system_program.to_account_info();
+        require!(
+            ctx.accounts.package.status == PackageStatus::InTransit,
+            ErrorCode::InvalidPackageStatus
+        );
+        require!(
+            ctx.accounts.package.carrier == ctx.accounts.carrier.key(),
+            ErrorCode::Unauthorized
+        );
 
-        // Now get mutable references
+        let package_key = ctx.accounts.package.key();
+        let seeds = &[
+            b"escrow".as_ref(),
+            package_key.as_ref(),
+            &[ctx.accounts.escrow.bump],
+        ];
+
+        // Transfer tokens from escrow to carrier
+        anchor_spl::token::transfer(
+            CpiContext::new_with_signer(
+                ctx.accounts.token_program.to_account_info(),
+                anchor_spl::token::Transfer {
+                    from: ctx.accounts.escrow_token.to_account_info(),
+                    to: ctx.accounts.carrier_token.to_account_info(),
+                    authority: ctx.accounts.escrow.to_account_info(),
+                },
+                &[seeds],
+            ),
+            ctx.accounts.escrow.amount,
+        )?;
+
+        // Close the escrow token account
+        anchor_spl::token::close_account(
+            CpiContext::new_with_signer(
+                ctx.accounts.token_program.to_account_info(),
+                anchor_spl::token::CloseAccount {
+                    account: ctx.accounts.escrow_token.to_account_info(),
+                    destination: ctx.accounts.sender.to_account_info(),
+                    authority: ctx.accounts.escrow.to_account_info(),
+                },
+                &[seeds],
+            ),
+        )?;
+
         let package = &mut ctx.accounts.package;
         let carrier = &mut ctx.accounts.carrier;
         let platform = &mut ctx.accounts.platform;
 
-        require!(package.status == PackageStatus::InTransit, ErrorCode::InvalidPackageStatus);
-        require!(package.carrier == carrier_key, ErrorCode::Unauthorized);
-
-        let platform_fee = package.price.checked_mul(platform.fee_rate as u64).unwrap()
-            .checked_div(10000).unwrap();
-        let carrier_payment = package.price.checked_sub(platform_fee).unwrap();
-
-        // Transfer payment to carrier
-        let cpi_context = CpiContext::new(
-            system_program_info.clone(),
-            anchor_lang::system_program::Transfer {
-                from: escrow_account_info.clone(),
-                to: carrier_account_info,
-            },
-        );
-        anchor_lang::system_program::transfer(cpi_context, carrier_payment)?;
-
-        // Transfer platform fee
-        let cpi_context = CpiContext::new(
-            system_program_info,
-            anchor_lang::system_program::Transfer {
-                from: escrow_account_info,
-                to: platform_account_info,
-            },
-        );
-        anchor_lang::system_program::transfer(cpi_context, platform_fee)?;
-
         package.status = PackageStatus::Delivered;
         package.delivered_at = Clock::get()?.unix_timestamp;
         carrier.completed_deliveries = carrier.completed_deliveries.checked_add(1).unwrap();
-        carrier.reputation = carrier.reputation.checked_add(10).unwrap();
+        carrier.reputation = carrier.reputation.checked_add(platform.reputation_increase).unwrap();
 
         Ok(())
     }
@@ -213,6 +261,36 @@ pub struct AcceptDelivery<'info> {
     pub system_program: Program<'info, System>,
 }
 
+/// Context for creating a new escrow account
+#[derive(Accounts)]
+pub struct CreateEscrow<'info> {
+    #[account(
+        init,
+        payer = sender,
+        space = 8 + 8 + 32 + 32 + 1,
+        seeds = [b"escrow", package.key().as_ref()],
+        bump,
+    )]
+    pub escrow: Account<'info, Escrow>,
+    #[account(mut)]
+    pub sender: Signer<'info>,
+    #[account(mut)]
+    pub sender_token: Account<'info, TokenAccount>,
+    #[account(
+        init,
+        payer = sender,
+        associated_token::mint = token_mint,
+        associated_token::authority = escrow
+    )]
+    pub escrow_token: Account<'info, TokenAccount>,
+    pub token_mint: Account<'info, Mint>,
+    #[account(mut)]
+    pub package: Account<'info, Package>,
+    pub token_program: Program<'info, Token>,
+    pub associated_token_program: Program<'info, AssociatedToken>,
+    pub system_program: Program<'info, System>,
+}
+
 /// Context for completing a package delivery
 #[derive(Accounts)]
 pub struct CompleteDelivery<'info> {
@@ -226,14 +304,21 @@ pub struct CompleteDelivery<'info> {
     pub carrier: Account<'info, Carrier>,
     #[account(mut)]
     pub platform: Account<'info, Platform>,
-    /// CHECK: This is the escrow account that holds the payment funds
     #[account(
         mut,
-        signer,
-        constraint = escrow.lamports() >= package.price
+        seeds = [b"escrow", package.key().as_ref()],
+        bump = escrow.bump,
+        constraint = escrow.carrier == carrier.key()
     )]
-    pub escrow: AccountInfo<'info>,
-    pub system_program: Program<'info, System>,
+    pub escrow: Account<'info, Escrow>,
+    #[account(mut)]
+    pub escrow_token: Account<'info, TokenAccount>,
+    #[account(mut)]
+    pub carrier_token: Account<'info, TokenAccount>,
+    /// CHECK: This account receives rent from closing escrow token account
+    #[account(mut)]
+    pub sender: UncheckedAccount<'info>,
+    pub token_program: Program<'info, Token>,
 }
 
 /// Context for creating a new carrier
