@@ -83,49 +83,37 @@ pub mod parcelchain_dapp {
     }
 
     /// Creates a new escrow account for the package
-    pub fn create_escrow(
-        ctx: Context<CreateEscrow>,
-        amount: u64,
-    ) -> Result<()> {
+    pub fn create_escrow(ctx: Context<CreateEscrow>, amount: u64) -> Result<()> {
         let escrow = &mut ctx.accounts.escrow;
-        let package = &mut ctx.accounts.package;
-        let _platform = &ctx.accounts.platform; // Prefix with underscore to indicate intentional unused
-        let clock = Clock::get()?;
+        let sender = &mut ctx.accounts.sender;
+        let platform = &ctx.accounts.platform;
+        let package = &ctx.accounts.package;
 
-        // Validate amount matches package price
-        require!(amount == package.price, ErrorCode::InvalidAmount);
-        
-        // Validate sender has sufficient balance
-        require!(
-            ctx.accounts.sender_token.amount >= amount,
-            ErrorCode::InsufficientBalance
-        );
+        // Calculate platform fee
+        let platform_fee = amount
+            .checked_mul(platform.fee_rate.into())
+            .unwrap()
+            .checked_div(10000)
+            .unwrap();
 
-        // Initialize escrow account
-        escrow.package = package.key();
-        escrow.sender = ctx.accounts.sender.key();
-        escrow.carrier = package.carrier;
-        escrow.amount = amount;
-        escrow.created_at = clock.unix_timestamp;
-        escrow.released_at = 0;
-        escrow.status = EscrowStatus::Created;
-        escrow.bump = ctx.bumps.escrow;
-
-        // Transfer tokens from sender to escrow
-        anchor_spl::token::transfer(
-            CpiContext::new(
-                ctx.accounts.token_program.to_account_info(),
-                anchor_spl::token::Transfer {
-                    from: ctx.accounts.sender_token.to_account_info(),
-                    to: ctx.accounts.escrow_token.to_account_info(),
-                    authority: ctx.accounts.sender.to_account_info(),
-                },
+        // Transfer SOL to escrow
+        anchor_lang::solana_program::program::invoke(
+            &anchor_lang::solana_program::system_instruction::transfer(
+                &sender.key(),
+                &escrow.key(),
+                amount,
             ),
-            amount,
+            &[
+                sender.to_account_info(),
+                escrow.to_account_info(),
+                ctx.accounts.system_program.to_account_info(),
+            ],
         )?;
 
-        // Update escrow status to Funded
+        // Update escrow state
+        escrow.amount = amount;
         escrow.status = EscrowStatus::Funded;
+        escrow.carrier = package.carrier;
 
         Ok(())
     }
@@ -206,6 +194,19 @@ pub mod parcelchain_dapp {
 
         Ok(())
     }
+
+    pub fn initialize_escrow(ctx: Context<InitializeEscrow>) -> Result<()> {
+        let escrow = &mut ctx.accounts.escrow;
+        escrow.amount = 0;
+        escrow.status = EscrowStatus::Created;
+        escrow.sender = ctx.accounts.sender.key();
+        escrow.package = ctx.accounts.package.key();
+        escrow.carrier = Pubkey::default();
+        escrow.created_at = Clock::get()?.unix_timestamp;
+        escrow.released_at = 0;
+        escrow.bump = ctx.bumps.escrow;
+        Ok(())
+    }
 }
 
 /// Context for initializing the platform
@@ -265,35 +266,15 @@ pub struct AcceptDelivery<'info> {
 #[derive(Accounts)]
 pub struct CreateEscrow<'info> {
     #[account(
-        init,
-        payer = sender,
-        space = 8 + 8 + 32 + 32 + 1,
+        mut,
         seeds = [b"escrow", package.key().as_ref()],
         bump
     )]
     pub escrow: Account<'info, Escrow>,
     #[account(mut)]
     pub sender: Signer<'info>,
-    #[account(mut)]
-    pub sender_token: Account<'info, TokenAccount>,
-    #[account(
-        init,
-        payer = sender,
-        associated_token::mint = token_mint,
-        associated_token::authority = escrow
-    )]
-    pub escrow_token: Account<'info, TokenAccount>,
-    #[account(
-        constraint = token_mint.key() == platform.default_token || 
-                    platform.allowed_tokens.contains(&token_mint.key())
-    )]
-    pub token_mint: Account<'info, Mint>,
-    #[account(mut)]
     pub package: Account<'info, Package>,
-    #[account(mut)]
     pub platform: Account<'info, Platform>,
-    pub token_program: Program<'info, Token>,
-    pub associated_token_program: Program<'info, AssociatedToken>,
     pub system_program: Program<'info, System>,
 }
 
@@ -410,21 +391,13 @@ pub struct Carrier {
 /// Escrow account state
 #[account]
 pub struct Escrow {
-    /// Public key of the package
-    pub package: Pubkey,
-    /// Public key of the sender
-    pub sender: Pubkey,
-    /// Public key of the carrier
-    pub carrier: Pubkey,
-    /// Amount of tokens in escrow
     pub amount: u64,
-    /// Unix timestamp when the escrow was created
-    pub created_at: i64,
-    /// Unix timestamp when the escrow was released
-    pub released_at: i64,
-    /// Current status of the escrow
     pub status: EscrowStatus,
-    /// Bump seed for the escrow PDA
+    pub sender: Pubkey,
+    pub package: Pubkey,
+    pub carrier: Pubkey,
+    pub created_at: i64,
+    pub released_at: i64,
     pub bump: u8,
 }
 
@@ -498,4 +471,20 @@ pub enum ErrorCode {
 pub struct PlatformInitialized {
     pub authority: Pubkey,
     pub fee_rate: u16,
+}
+
+#[derive(Accounts)]
+pub struct InitializeEscrow<'info> {
+    #[account(
+        init,
+        payer = sender,
+        space = 8 + 8 + 1 + 32 + 32 + 32 + 8 + 8 + 1,
+        seeds = [b"escrow", package.key().as_ref()],
+        bump
+    )]
+    pub escrow: Account<'info, Escrow>,
+    #[account(mut)]
+    pub sender: Signer<'info>,
+    pub package: Account<'info, Package>,
+    pub system_program: Program<'info, System>,
 }
