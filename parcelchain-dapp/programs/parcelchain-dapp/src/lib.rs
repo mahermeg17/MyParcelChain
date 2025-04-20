@@ -7,21 +7,12 @@ use anchor_spl::{
 
 declare_id!("3mG95ZAAcoJdwsnufkcyo1hSivS1cD7R4rvekyoLbZzm");
 
-mod state;
-pub use state::*;
-
 /// ParcelChain program module containing all instructions
 #[program]
 pub mod parcelchain_dapp {
     use super::*;
 
     /// Initializes the platform with the given authority and fee rate
-    /// 
-    /// # Arguments
-    /// * `ctx` - Context containing the platform and authority accounts
-    /// 
-    /// # Errors
-    /// Returns an error if the platform account cannot be initialized
     pub fn initialize(ctx: Context<Initialize>) -> Result<()> {
         let platform = &mut ctx.accounts.platform;
         platform.authority = ctx.accounts.authority.key();
@@ -32,33 +23,18 @@ pub mod parcelchain_dapp {
     }
 
     /// Creates a new carrier account with the specified initial reputation
-    /// 
-    /// # Arguments
-    /// * `ctx` - Context containing the carrier and authority accounts
-    /// * `initial_reputation` - Initial reputation score for the carrier (0-255)
-    /// 
-    /// # Errors
-    /// Returns an error if the carrier account cannot be initialized
     pub fn create_carrier(ctx: Context<CreateCarrier>, initial_reputation: u8) -> Result<()> {
+        require!(initial_reputation <= 100, ErrorCode::InvalidReputation);
+        
         let carrier = &mut ctx.accounts.carrier;
         carrier.authority = ctx.accounts.authority.key();
         carrier.reputation = initial_reputation;
         carrier.completed_deliveries = 0;
+        carrier.bump = ctx.bumps.carrier;
         Ok(())
     }
 
     /// Registers a new package for delivery
-    /// 
-    /// # Arguments
-    /// * `ctx` - Context containing the package, sender, and platform accounts
-    /// * `description` - Description of the package contents
-    /// * `weight` - Weight of the package in grams
-    /// * `dimensions` - Package dimensions [length, width, height] in centimeters
-    /// * `price` - Delivery price in lamports
-    /// * `package_id` - Unique identifier for the package
-    /// 
-    /// # Errors
-    /// Returns an error if the package account cannot be initialized
     pub fn register_package(
         ctx: Context<RegisterPackage>,
         description: String,
@@ -69,35 +45,27 @@ pub mod parcelchain_dapp {
     ) -> Result<()> {
         let package = &mut ctx.accounts.package;
         let platform = &mut ctx.accounts.platform;
+        let clock = Clock::get()?;
 
-        // Validate dimensions
-        require!(dimensions.iter().all(|&d| d > 0), ErrorCode::InvalidDimensions);
-        // Validate price
-        require!(price > 0, ErrorCode::InvalidPrice);
-
+        // Initialize package
+        package.id = package_id as u64;
         package.sender = ctx.accounts.sender.key();
         package.description = description;
         package.weight = weight;
         package.dimensions = dimensions;
         package.price = price;
         package.status = PackageStatus::Registered;
-        package.created_at = Clock::get()?.unix_timestamp;
-        package.id = package_id as u64;
+        package.created_at = clock.unix_timestamp;
+        package.accepted_at = 0;
+        package.delivered_at = 0;
 
+        // Update platform stats
         platform.total_packages = platform.total_packages.checked_add(1).unwrap();
 
         Ok(())
     }
 
     /// Accepts a package delivery request by a carrier
-    /// 
-    /// # Arguments
-    /// * `ctx` - Context containing the package and carrier accounts
-    /// 
-    /// # Errors
-    /// Returns an error if:
-    /// - Package status is not Registered
-    /// - Carrier reputation is insufficient
     pub fn accept_delivery(ctx: Context<AcceptDelivery>) -> Result<()> {
         let package = &mut ctx.accounts.package;
         let carrier = &mut ctx.accounts.carrier;
@@ -113,100 +81,48 @@ pub mod parcelchain_dapp {
     }
 
     /// Creates a new escrow account for the package
-    /// 
-    /// # Arguments
-    /// * `ctx` - Context containing the escrow, sender, and package accounts
-    /// * `amount` - Amount of tokens to be transferred to the escrow
-    /// 
-    /// # Errors
-    /// Returns an error if the escrow account cannot be initialized
     pub fn create_escrow(
         ctx: Context<CreateEscrow>,
         amount: u64,
     ) -> Result<()> {
         let escrow = &mut ctx.accounts.escrow;
-        escrow.amount = amount;
-        escrow.package = ctx.accounts.package.key();
-        escrow.carrier = ctx.accounts.package.carrier;
-        escrow.bump = ctx.bumps.escrow;
+        let package = &mut ctx.accounts.package;
+        let clock = Clock::get()?;
 
-        anchor_spl::token::transfer(
-            CpiContext::new(
-                ctx.accounts.token_program.to_account_info(),
-                anchor_spl::token::Transfer {
-                    from: ctx.accounts.sender_token.to_account_info(),
-                    to: ctx.accounts.escrow_token.to_account_info(),
-                    authority: ctx.accounts.sender.to_account_info(),
-                },
-            ),
-            amount,
-        )?;
+        escrow.package = package.key();
+        escrow.sender = ctx.accounts.sender.key();
+        escrow.carrier = package.carrier;
+        escrow.amount = amount;
+        escrow.created_at = clock.unix_timestamp;
+        escrow.released_at = 0;
+        escrow.status = EscrowStatus::Created;
+        escrow.bump = ctx.bumps.escrow;
 
         Ok(())
     }
 
     /// Completes a package delivery and distributes payment
-    /// 
-    /// # Arguments
-    /// * `ctx` - Context containing the package, carrier, platform, and escrow accounts
-    /// 
-    /// # Errors
-    /// Returns an error if:
-    /// - Package status is not InTransit
-    /// - Carrier is not authorized
-    /// - Payment transfer fails
     pub fn complete_delivery(ctx: Context<CompleteDelivery>) -> Result<()> {
-        require!(
-            ctx.accounts.package.status == PackageStatus::InTransit,
-            ErrorCode::InvalidPackageStatus
-        );
-        require!(
-            ctx.accounts.package.carrier == ctx.accounts.carrier.key(),
-            ErrorCode::Unauthorized
-        );
-
-        let package_key = ctx.accounts.package.key();
-        let seeds = &[
-            b"escrow".as_ref(),
-            package_key.as_ref(),
-            &[ctx.accounts.escrow.bump],
-        ];
-
-        // Transfer tokens from escrow to carrier
-        anchor_spl::token::transfer(
-            CpiContext::new_with_signer(
-                ctx.accounts.token_program.to_account_info(),
-                anchor_spl::token::Transfer {
-                    from: ctx.accounts.escrow_token.to_account_info(),
-                    to: ctx.accounts.carrier_token.to_account_info(),
-                    authority: ctx.accounts.escrow.to_account_info(),
-                },
-                &[seeds],
-            ),
-            ctx.accounts.escrow.amount,
-        )?;
-
-        // Close the escrow token account
-        anchor_spl::token::close_account(
-            CpiContext::new_with_signer(
-                ctx.accounts.token_program.to_account_info(),
-                anchor_spl::token::CloseAccount {
-                    account: ctx.accounts.escrow_token.to_account_info(),
-                    destination: ctx.accounts.sender.to_account_info(),
-                    authority: ctx.accounts.escrow.to_account_info(),
-                },
-                &[seeds],
-            ),
-        )?;
-
         let package = &mut ctx.accounts.package;
         let carrier = &mut ctx.accounts.carrier;
         let platform = &mut ctx.accounts.platform;
+        let escrow = &mut ctx.accounts.escrow;
+        let clock = Clock::get()?;
 
+        require!(package.status == PackageStatus::InTransit, ErrorCode::InvalidPackageStatus);
+        require!(escrow.status == EscrowStatus::Created, ErrorCode::InvalidEscrowAccount);
+
+        // Update package status
         package.status = PackageStatus::Delivered;
-        package.delivered_at = Clock::get()?.unix_timestamp;
+        package.delivered_at = clock.unix_timestamp;
+
+        // Update carrier stats
         carrier.completed_deliveries = carrier.completed_deliveries.checked_add(1).unwrap();
         carrier.reputation = carrier.reputation.checked_add(platform.reputation_increase).unwrap();
+
+        // Update escrow status
+        escrow.status = EscrowStatus::Released;
+        escrow.released_at = clock.unix_timestamp;
 
         Ok(())
     }
@@ -218,7 +134,7 @@ pub struct Initialize<'info> {
     #[account(
         init,
         payer = authority,
-        space = 8 + 32 + 2 + 8 + 1,  // 8 (discriminator) + 32 (authority) + 2 (fee_rate) + 8 (total_packages) + 1 (reputation_increase)
+        space = 8 + 32 + 2 + 8 + 1,
         seeds = [b"platform"],
         bump
     )]
@@ -269,7 +185,7 @@ pub struct CreateEscrow<'info> {
         payer = sender,
         space = 8 + 8 + 32 + 32 + 1,
         seeds = [b"escrow", package.key().as_ref()],
-        bump,
+        bump
     )]
     pub escrow: Account<'info, Escrow>,
     #[account(mut)]
@@ -321,13 +237,13 @@ pub struct CompleteDelivery<'info> {
     pub token_program: Program<'info, Token>,
 }
 
-/// Context for creating a new carrier
+/// Context for creating a new carrier account
 #[derive(Accounts)]
 pub struct CreateCarrier<'info> {
     #[account(
         init,
         payer = authority,
-        space = 8 + 32 + 1 + 4,
+        space = 8 + 32 + 1 + 4 + 1,  // 8 (discriminator) + 32 (authority) + 1 (reputation) + 4 (completed_deliveries) + 1 (bump)
         seeds = [b"carrier", authority.key().as_ref()],
         bump
     )]
@@ -337,7 +253,7 @@ pub struct CreateCarrier<'info> {
     pub system_program: Program<'info, System>,
 }
 
-/// Platform account that stores global platform state
+/// Platform account state
 #[account]
 pub struct Platform {
     /// Public key of the platform owner/authority
@@ -349,7 +265,7 @@ pub struct Platform {
     pub reputation_increase: u8,
 }
 
-/// Package account that stores information about a specific delivery
+/// Package account state
 #[account]
 pub struct Package {
     /// Unique identifier for the package
@@ -376,7 +292,7 @@ pub struct Package {
     pub delivered_at: i64,
 }
 
-/// Carrier account that stores information about a delivery carrier
+/// Carrier account state
 #[account]
 pub struct Carrier {
     /// Public key of the carrier's authority
@@ -385,10 +301,33 @@ pub struct Carrier {
     pub reputation: u8,
     /// Number of successfully completed deliveries
     pub completed_deliveries: u32,
+    /// Bump seed for the carrier PDA
+    pub bump: u8,
 }
 
-/// Enum representing the possible states of a package delivery
-#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq)]
+/// Escrow account state
+#[account]
+pub struct Escrow {
+    /// Public key of the package
+    pub package: Pubkey,
+    /// Public key of the sender
+    pub sender: Pubkey,
+    /// Public key of the carrier
+    pub carrier: Pubkey,
+    /// Amount of tokens in escrow
+    pub amount: u64,
+    /// Unix timestamp when the escrow was created
+    pub created_at: i64,
+    /// Unix timestamp when the escrow was released
+    pub released_at: i64,
+    /// Current status of the escrow
+    pub status: EscrowStatus,
+    /// Bump seed for the escrow PDA
+    pub bump: u8,
+}
+
+/// Package status enum
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PackageStatus {
     /// Package is registered but not yet assigned to a carrier
     Registered,
@@ -398,7 +337,18 @@ pub enum PackageStatus {
     Delivered,
 }
 
-/// Custom error codes for the program
+/// Escrow status enum
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EscrowStatus {
+    /// Escrow account is created but not yet funded
+    Created,
+    /// Escrow account is funded and ready for release
+    Funded,
+    /// Escrow account has been released
+    Released,
+}
+
+/// Error codes for the program
 #[error_code]
 pub enum ErrorCode {
     /// Package status is invalid for the requested operation
@@ -424,6 +374,8 @@ pub enum ErrorCode {
     AlreadyInitialized,
     #[msg("Invalid fee rate")]
     InvalidFeeRate,
+    #[msg("Invalid reputation")]
+    InvalidReputation,
 }
 
 #[event]
