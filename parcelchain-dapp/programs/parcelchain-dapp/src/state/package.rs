@@ -1,31 +1,63 @@
 use anchor_lang::prelude::*;
 
-#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq)]
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PackageStatus {
     Registered,
     InTransit,
+    DeliveredPendingConfirmation,
     Delivered,
+    Disputed,
     Cancelled,
 }
 
-impl Default for PackageStatus {
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub struct Dimensions {
+    pub length: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
+impl Default for Dimensions {
     fn default() -> Self {
-        PackageStatus::Registered
+        Self {
+            length: 0,
+            width: 0,
+            height: 0,
+        }
     }
 }
 
 #[account]
-#[derive(Default)]
 pub struct Package {
-    pub sender: Pubkey,             // The sender of the package
-    pub carrier: Option<Pubkey>,    // The carrier assigned to deliver the package
-    pub description: String,        // Description of the package contents
-    pub weight: u32,                // Weight in grams
-    pub dimensions: [u32; 3],       // Dimensions [length, width, height] in cm
-    pub price: u64,                 // Delivery price in lamports
-    pub status: PackageStatus,      // Current status of the package
-    pub created_at: i64,            // Timestamp when the package was created
-    pub accepted_at: Option<i64>,   // Timestamp when the package was accepted
-    pub delivered_at: Option<i64>,  // Timestamp when the package was delivered
-    pub id: u64,                    // Unique identifier for the package
+    pub shipper: Pubkey,
+    pub recipient: Pubkey,
+    pub carrier: Pubkey,
+    pub description: String,
+    pub dimensions: Dimensions,
+    pub weight: u32,
+    pub price: u64,
+    pub status: PackageStatus,
+    pub registered_at: i64,
+    pub accepted_at: i64,
+    pub delivered_at: i64,
+    pub recipient_confirmed_at: i64,
+}
+
+impl Default for Package {
+    fn default() -> Self {
+        Self {
+            shipper: Pubkey::default(),
+            recipient: Pubkey::default(),
+            carrier: Pubkey::default(),
+            description: String::new(),
+            dimensions: Dimensions::default(),
+            weight: 0,
+            price: 0,
+            status: PackageStatus::Registered,
+            registered_at: 0,
+            accepted_at: 0,
+            delivered_at: 0,
+            recipient_confirmed_at: 0,
+        }
+    }
 } 
