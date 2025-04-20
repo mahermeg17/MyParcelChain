@@ -4,6 +4,8 @@ A decentralized application built on Solana for managing package deliveries with
 
 Devnet : https://explorer.solana.com/tx/2nwiBbaDJicyYSbESLX1Z4PEtiKNnrvsB1SZ7Q8NGZjoFZLzkVrqFPFNeB7eE2LQpgfpu3Bit3ZSnPvjVu88uYWo?cluster=devnet
 
+deploy id: declare_id!("HpqJwZQf7KdAqqHN9EV1Fus7HBQKbSf7pDZeW1fzwPyb");
+
 ## Features
 
 - Package registration and tracking
