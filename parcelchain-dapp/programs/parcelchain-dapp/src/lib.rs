@@ -170,10 +170,12 @@ pub struct AcceptDelivery<'info> {
     pub package: Account<'info, Package>,
     #[account(
         mut,
-        seeds = [b"carrier", carrier.authority.as_ref()],
-        bump
+        seeds = [b"carrier", authority.key().as_ref()],
+        bump,
+        has_one = authority
     )]
     pub carrier: Account<'info, Carrier>,
+    pub authority: Signer<'info>,
     pub system_program: Program<'info, System>,
 }
 

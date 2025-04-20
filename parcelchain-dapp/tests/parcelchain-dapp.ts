@@ -11,6 +11,10 @@ describe("parcelchain-dapp", () => {
   const program = anchor.workspace.ParcelchainDapp as Program<ParcelchainDapp>;
   const programId = new PublicKey("3mG95ZAAcoJdwsnufkcyo1hSivS1cD7R4rvekyoLbZzm");
 
+  // Store keypairs that will be used across tests
+  let carrier: anchor.web3.Keypair;
+  let carrierAccount: PublicKey;
+
   // Derive platform PDA using the same seed as the Rust program
   const [platform] = PublicKey.findProgramAddressSync(
     [Buffer.from("platform")],
@@ -174,10 +178,10 @@ describe("parcelchain-dapp", () => {
 
   it("Creates a carrier", async () => {
     // Generate keypair for carrier
-    const carrier = anchor.web3.Keypair.generate();
+    carrier = anchor.web3.Keypair.generate();
 
     // Derive carrier PDA using the same seeds as the Rust program
-    const [carrierAccount] = PublicKey.findProgramAddressSync(
+    [carrierAccount] = PublicKey.findProgramAddressSync(
       [
         Buffer.from("carrier"),
         carrier.publicKey.toBuffer()
@@ -245,6 +249,60 @@ describe("parcelchain-dapp", () => {
     assert.ok(
       carrierData.bump > 0,
       "Account bump should be set"
+    );
+  });
+
+  it("Accepts a package delivery", async () => {
+    // Use the existing package and carrier
+    const packageId = 1;
+    const [packageAccount] = PublicKey.findProgramAddressSync(
+      [
+        Buffer.from("package"),
+        platform.toBuffer(),
+        Buffer.from([packageId])
+      ],
+      programId
+    );
+
+    console.log("Attempting to accept package with carrier:", carrier.publicKey.toString());
+    console.log("Package account:", packageAccount.toString());
+    console.log("Carrier account:", carrierAccount.toString());
+
+    // Accept the package delivery
+    const tx = await program.methods
+      .acceptDelivery()
+      .accounts({
+        package: packageAccount,
+        carrier: carrierAccount,
+        authority: carrier.publicKey,
+        systemProgram: SystemProgram.programId,
+      })
+      .signers([carrier])
+      .rpc({ commitment: "confirmed", skipPreflight: true });
+
+    console.log("Package acceptance transaction:", tx);
+
+    // Fetch and verify package account
+    const packageData = await program.account.package.fetch(packageAccount);
+    console.log("Updated package data:", JSON.stringify(packageData, null, 2));
+    
+    // Verify package status changed to InTransit
+    assert.deepEqual(
+      packageData.status,
+      { inTransit: {} },
+      "Package status should be InTransit"
+    );
+    
+    // Verify carrier assignment
+    assert.ok(
+      packageData.carrier.equals(carrierAccount),
+      "Package carrier should be assigned"
+    );
+    
+    // Verify accepted timestamp
+    assert.ok(
+      packageData.acceptedAt.toNumber() > 0,
+      "Accepted timestamp should be set"
     );
   });
 });
