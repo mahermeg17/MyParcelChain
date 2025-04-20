@@ -150,33 +150,35 @@ pub mod parcelchain_dapp {
         // Get escrow account info before mutable borrow
         let escrow_account_info = escrow.to_account_info();
 
-        // Transfer tokens to carrier
-        anchor_spl::token::transfer(
-            CpiContext::new_with_signer(
-                ctx.accounts.token_program.to_account_info(),
-                anchor_spl::token::Transfer {
-                    from: ctx.accounts.escrow_token.to_account_info(),
-                    to: ctx.accounts.carrier_token.to_account_info(),
-                    authority: escrow_account_info.clone(),
-                },
-                escrow_signer,
+        // Transfer SOL to carrier
+        anchor_lang::solana_program::program::invoke_signed(
+            &anchor_lang::solana_program::system_instruction::transfer(
+                &escrow.key(),
+                &carrier.authority,
+                carrier_amount,
             ),
-            carrier_amount,
+            &[
+                escrow_account_info.clone(),
+                carrier.to_account_info(),
+                ctx.accounts.system_program.to_account_info(),
+            ],
+            escrow_signer,
         )?;
 
         // Transfer platform fee if greater than 0
         if platform_fee > 0 {
-            anchor_spl::token::transfer(
-                CpiContext::new_with_signer(
-                    ctx.accounts.token_program.to_account_info(),
-                    anchor_spl::token::Transfer {
-                        from: ctx.accounts.escrow_token.to_account_info(),
-                        to: ctx.accounts.platform_token.to_account_info(),
-                        authority: escrow_account_info.clone(),
-                    },
-                    escrow_signer,
+            anchor_lang::solana_program::program::invoke_signed(
+                &anchor_lang::solana_program::system_instruction::transfer(
+                    &escrow.key(),
+                    &platform.key(),
+                    platform_fee,
                 ),
-                platform_fee,
+                &[
+                    escrow_account_info.clone(),
+                    platform.to_account_info(),
+                    ctx.accounts.system_program.to_account_info(),
+                ],
+                escrow_signer,
             )?;
         }
 
@@ -285,8 +287,9 @@ pub struct CompleteDelivery<'info> {
     pub package: Account<'info, Package>,
     #[account(
         mut,
-        seeds = [b"carrier", carrier.authority.as_ref()],
-        bump
+        seeds = [b"carrier", authority.key().as_ref()],
+        bump,
+        has_one = authority
     )]
     pub carrier: Account<'info, Carrier>,
     #[account(mut)]
@@ -298,21 +301,8 @@ pub struct CompleteDelivery<'info> {
         constraint = escrow.carrier == carrier.key()
     )]
     pub escrow: Account<'info, Escrow>,
-    #[account(mut)]
-    pub escrow_token: Account<'info, TokenAccount>,
-    #[account(mut)]
-    pub carrier_token: Account<'info, TokenAccount>,
-    #[account(
-        mut,
-        associated_token::mint = platform.default_token,
-        associated_token::authority = platform
-    )]
-    pub platform_token: Account<'info, TokenAccount>,
-    /// CHECK: This account receives rent from closing escrow token account
-    #[account(mut)]
-    pub sender: UncheckedAccount<'info>,
-    pub token_program: Program<'info, Token>,
-    pub associated_token_program: Program<'info, AssociatedToken>,
+    pub authority: Signer<'info>,
+    pub system_program: Program<'info, System>,
 }
 
 /// Context for creating a new carrier account

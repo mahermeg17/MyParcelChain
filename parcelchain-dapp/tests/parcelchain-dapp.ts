@@ -19,6 +19,7 @@ describe("parcelchain-dapp", () => {
   anchor.setProvider(provider);
 
   const program = anchor.workspace.ParcelchainDapp as Program<ParcelchainDapp>;
+  //const programId = new PublicKey("HwyKvfngeymtipSiAw7iqMVJNzwLgtToQFM97f8HhjNK");
   const programId = new PublicKey("3mG95ZAAcoJdwsnufkcyo1hSivS1cD7R4rvekyoLbZzm");
 
   // Store keypairs that will be used across tests
@@ -419,6 +420,223 @@ describe("parcelchain-dapp", () => {
 
     } catch (error) {
       console.error("Error creating escrow:", error);
+      if (error instanceof anchor.AnchorError) {
+        console.error("Error code:", error.error.errorCode.code);
+        console.error("Error message:", error.error.errorMessage);
+        console.error("Error logs:", error.logs);
+      } else if (error.logs) {
+        console.error("Transaction logs:", error.logs);
+      }
+      throw error;
+    }
+  });
+
+  it("Completes a package delivery and releases escrow funds", async () => {
+    // Generate keypairs for accounts
+    const sender = anchor.web3.Keypair.generate();
+    const recipient = anchor.web3.Keypair.generate();
+    const packageId = 3;
+
+    // Derive package PDA
+    const [packageAccount] = PublicKey.findProgramAddressSync(
+      [
+        Buffer.from("package"),
+        platform.toBuffer(),
+        Buffer.from([packageId])
+      ],
+      programId
+    );
+
+    // Fund accounts with SOL
+    await provider.connection.confirmTransaction(
+      await provider.connection.requestAirdrop(sender.publicKey, 3 * LAMPORTS_PER_SOL)
+    );
+
+    // Fund carrier account with SOL
+    await provider.connection.confirmTransaction(
+      await provider.connection.requestAirdrop(carrier.publicKey, LAMPORTS_PER_SOL)
+    );
+
+    // Register package
+    await program.methods
+      .registerPackage(
+        "Test Package",
+        new anchor.BN(1),
+        new Uint32Array([10, 10, 10]),
+        new anchor.BN(LAMPORTS_PER_SOL),
+        packageId
+      )
+      .accounts({
+        package: packageAccount,
+        sender: sender.publicKey,
+        platform: platform,
+        systemProgram: SystemProgram.programId,
+      })
+      .signers([sender])
+      .rpc();
+
+    // Accept delivery with carrier
+    await program.methods
+      .acceptDelivery()
+      .accounts({
+        package: packageAccount,
+        carrier: carrierAccount,
+        authority: carrier.publicKey,
+        systemProgram: SystemProgram.programId,
+      })
+      .signers([carrier])
+      .rpc();
+
+    // Derive escrow PDA
+    const [escrowAccount] = PublicKey.findProgramAddressSync(
+      [
+        Buffer.from("escrow"),
+        packageAccount.toBuffer()
+      ],
+      programId
+    );
+
+    try {
+      // Initialize escrow
+      await program.methods
+        .initializeEscrow()
+        .accounts({
+          escrow: escrowAccount,
+          sender: sender.publicKey,
+          package: packageAccount,
+          system_program: SystemProgram.programId,
+        })
+        .signers([sender])
+        .rpc();
+
+      // Create escrow with SOL
+      await program.methods
+        .createEscrow(new anchor.BN(LAMPORTS_PER_SOL))
+        .accounts({
+          escrow: escrowAccount,
+          sender: sender.publicKey,
+          package: packageAccount,
+          platform: platform,
+          system_program: SystemProgram.programId,
+        })
+        .signers([sender])
+        .rpc();
+
+      // Get initial balances
+      const initialCarrierBalance = await provider.connection.getBalance(carrier.publicKey);
+      const initialPlatformBalance = await provider.connection.getBalance(platform);
+
+      console.log("\n=== Complete Delivery Transaction Details ===");
+      console.log("Program ID:", programId.toBase58());
+      console.log("Program Version:", program.version);
+      
+      console.log("\nAccount Details:");
+      console.log("Package Account:", packageAccount.toBase58());
+      console.log("Carrier Account:", carrierAccount.toBase58());
+      console.log("Platform Account:", platform.toBase58());
+      console.log("Escrow Account:", escrowAccount.toBase58());
+      console.log("Carrier Authority:", carrier.publicKey.toBase58());
+      console.log("System Program:", SystemProgram.programId.toBase58());
+
+      console.log("\nAccount States Before Transaction:");
+      const prePackageData = await program.account.package.fetch(packageAccount);
+      const preCarrierData = await program.account.carrier.fetch(carrierAccount);
+      const preEscrowData = await program.account.escrow.fetch(escrowAccount);
+      console.log("Package Status:", prePackageData.status);
+      console.log("Carrier Authority:", preCarrierData.authority.toBase58());
+      console.log("Escrow Status:", preEscrowData.status);
+      console.log("Escrow Amount:", preEscrowData.amount.toString());
+      console.log("Escrow Carrier:", preEscrowData.carrier.toBase58());
+
+      console.log("\nBalances Before Transaction:");
+      console.log("Carrier Balance:", initialCarrierBalance);
+      console.log("Platform Balance:", initialPlatformBalance);
+
+      // Complete delivery
+      try {
+        console.log("\nBuilding Transaction...");
+        const tx = await program.methods
+          .complete_delivery()
+          .accounts({
+            package: packageAccount,
+            carrier: carrierAccount,
+            platform: platform,
+            escrow: escrowAccount,
+            authority: carrier.publicKey,
+            systemProgram: SystemProgram.programId,
+          })
+          .signers([carrier])
+          .rpc({ commitment: "confirmed", skipPreflight: true });
+
+        console.log("\nTransaction Successful!");
+        console.log("Transaction Signature:", tx);
+        
+        // Verify states after transaction
+        console.log("\nAccount States After Transaction:");
+        const postPackageData = await program.account.package.fetch(packageAccount);
+        const postEscrowData = await program.account.escrow.fetch(escrowAccount);
+        console.log("Package Status:", postPackageData.status);
+        console.log("Escrow Status:", postEscrowData.status);
+
+        // Verify balances
+        const finalCarrierBalance = await provider.connection.getBalance(carrier.publicKey);
+        const finalPlatformBalance = await provider.connection.getBalance(platform);
+        console.log("\nBalances After Transaction:");
+        console.log("Carrier Balance:", finalCarrierBalance);
+        console.log("Platform Balance:", finalPlatformBalance);
+
+      } catch (error) {
+        console.error("\nError in completeDelivery transaction:");
+        console.error("Error details:", error);
+        if (error.logs) {
+          console.error("Transaction logs:", error.logs);
+        }
+        if (error instanceof anchor.AnchorError) {
+          console.error("Error code:", error.error.errorCode.code);
+          console.error("Error message:", error.error.errorMessage);
+          console.error("Error logs:", error.logs);
+        }
+        throw error;
+      }
+
+      // Verify package status
+      const packageData = await program.account.package.fetch(packageAccount);
+      assert.deepEqual(
+        packageData.status,
+        { delivered: {} },
+        "Package status should be Delivered"
+      );
+
+      // Verify escrow status
+      const escrowData = await program.account.escrow.fetch(escrowAccount);
+      assert.deepEqual(
+        escrowData.status,
+        { released: {} },
+        "Escrow status should be Released"
+      );
+
+      // Verify balances
+      const finalCarrierBalance = await provider.connection.getBalance(carrier.publicKey);
+      const finalPlatformBalance = await provider.connection.getBalance(platform);
+
+      // Calculate expected balances
+      const platformFee = new anchor.BN(LAMPORTS_PER_SOL).mul(new anchor.BN(200)).div(new anchor.BN(10000)); // 2% fee
+      const carrierPayment = new anchor.BN(LAMPORTS_PER_SOL).sub(platformFee);
+
+      // Verify carrier received payment minus platform fee
+      assert.ok(
+        finalCarrierBalance > initialCarrierBalance,
+        "Carrier should receive payment"
+      );
+
+      // Verify platform received fee
+      assert.ok(
+        finalPlatformBalance > initialPlatformBalance,
+        "Platform should receive fee"
+      );
+
+    } catch (error) {
+      console.error("Error completing delivery:", error);
       if (error instanceof anchor.AnchorError) {
         console.error("Error code:", error.error.errorCode.code);
         console.error("Error message:", error.error.errorMessage);
