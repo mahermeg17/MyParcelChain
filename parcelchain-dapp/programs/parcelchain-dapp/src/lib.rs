@@ -19,6 +19,8 @@ pub mod parcelchain_dapp {
         platform.fee_rate = 200; // 2% platform fee
         platform.total_packages = 0;
         platform.reputation_increase = 10; // Default reputation increase
+        platform.default_token = ctx.accounts.default_token.key();
+        platform.allowed_tokens = Vec::new();
         Ok(())
     }
 
@@ -87,8 +89,19 @@ pub mod parcelchain_dapp {
     ) -> Result<()> {
         let escrow = &mut ctx.accounts.escrow;
         let package = &mut ctx.accounts.package;
+        let _platform = &ctx.accounts.platform; // Prefix with underscore to indicate intentional unused
         let clock = Clock::get()?;
 
+        // Validate amount matches package price
+        require!(amount == package.price, ErrorCode::InvalidAmount);
+        
+        // Validate sender has sufficient balance
+        require!(
+            ctx.accounts.sender_token.amount >= amount,
+            ErrorCode::InsufficientBalance
+        );
+
+        // Initialize escrow account
         escrow.package = package.key();
         escrow.sender = ctx.accounts.sender.key();
         escrow.carrier = package.carrier;
@@ -98,6 +111,22 @@ pub mod parcelchain_dapp {
         escrow.status = EscrowStatus::Created;
         escrow.bump = ctx.bumps.escrow;
 
+        // Transfer tokens from sender to escrow
+        anchor_spl::token::transfer(
+            CpiContext::new(
+                ctx.accounts.token_program.to_account_info(),
+                anchor_spl::token::Transfer {
+                    from: ctx.accounts.sender_token.to_account_info(),
+                    to: ctx.accounts.escrow_token.to_account_info(),
+                    authority: ctx.accounts.sender.to_account_info(),
+                },
+            ),
+            amount,
+        )?;
+
+        // Update escrow status to Funded
+        escrow.status = EscrowStatus::Funded;
+
         Ok(())
     }
 
@@ -105,12 +134,63 @@ pub mod parcelchain_dapp {
     pub fn complete_delivery(ctx: Context<CompleteDelivery>) -> Result<()> {
         let package = &mut ctx.accounts.package;
         let carrier = &mut ctx.accounts.carrier;
-        let platform = &mut ctx.accounts.platform;
+        let platform = &ctx.accounts.platform;
         let escrow = &mut ctx.accounts.escrow;
         let clock = Clock::get()?;
 
         require!(package.status == PackageStatus::InTransit, ErrorCode::InvalidPackageStatus);
-        require!(escrow.status == EscrowStatus::Created, ErrorCode::InvalidEscrowAccount);
+        require!(escrow.status == EscrowStatus::Funded, ErrorCode::InvalidEscrowAccount);
+
+        // Calculate platform fee
+        let platform_fee = escrow.amount
+            .checked_mul(platform.fee_rate as u64)
+            .unwrap()
+            .checked_div(10000)
+            .unwrap();
+        
+        let carrier_amount = escrow.amount.checked_sub(platform_fee).unwrap();
+
+        // Create escrow authority seeds
+        let package_key = package.key();
+        let escrow_seeds = &[
+            b"escrow",
+            package_key.as_ref(),
+            &[escrow.bump],
+        ];
+        let escrow_signer = &[&escrow_seeds[..]];
+
+        // Get escrow account info before mutable borrow
+        let escrow_account_info = escrow.to_account_info();
+
+        // Transfer tokens to carrier
+        anchor_spl::token::transfer(
+            CpiContext::new_with_signer(
+                ctx.accounts.token_program.to_account_info(),
+                anchor_spl::token::Transfer {
+                    from: ctx.accounts.escrow_token.to_account_info(),
+                    to: ctx.accounts.carrier_token.to_account_info(),
+                    authority: escrow_account_info.clone(),
+                },
+                escrow_signer,
+            ),
+            carrier_amount,
+        )?;
+
+        // Transfer platform fee if greater than 0
+        if platform_fee > 0 {
+            anchor_spl::token::transfer(
+                CpiContext::new_with_signer(
+                    ctx.accounts.token_program.to_account_info(),
+                    anchor_spl::token::Transfer {
+                        from: ctx.accounts.escrow_token.to_account_info(),
+                        to: ctx.accounts.platform_token.to_account_info(),
+                        authority: escrow_account_info.clone(),
+                    },
+                    escrow_signer,
+                ),
+                platform_fee,
+            )?;
+        }
 
         // Update package status
         package.status = PackageStatus::Delivered;
@@ -134,7 +214,7 @@ pub struct Initialize<'info> {
     #[account(
         init,
         payer = authority,
-        space = 8 + 32 + 2 + 8 + 1,
+        space = 8 + 32 + 2 + 8 + 1 + 32 + 32,
         seeds = [b"platform"],
         bump
     )]
@@ -142,6 +222,8 @@ pub struct Initialize<'info> {
     #[account(mut)]
     pub authority: Signer<'info>,
     pub system_program: Program<'info, System>,
+    /// The default token mint for payments
+    pub default_token: Account<'info, Mint>,
 }
 
 /// Context for registering a new package
@@ -201,9 +283,15 @@ pub struct CreateEscrow<'info> {
         associated_token::authority = escrow
     )]
     pub escrow_token: Account<'info, TokenAccount>,
+    #[account(
+        constraint = token_mint.key() == platform.default_token || 
+                    platform.allowed_tokens.contains(&token_mint.key())
+    )]
     pub token_mint: Account<'info, Mint>,
     #[account(mut)]
     pub package: Account<'info, Package>,
+    #[account(mut)]
+    pub platform: Account<'info, Platform>,
     pub token_program: Program<'info, Token>,
     pub associated_token_program: Program<'info, AssociatedToken>,
     pub system_program: Program<'info, System>,
@@ -233,10 +321,17 @@ pub struct CompleteDelivery<'info> {
     pub escrow_token: Account<'info, TokenAccount>,
     #[account(mut)]
     pub carrier_token: Account<'info, TokenAccount>,
+    #[account(
+        mut,
+        associated_token::mint = platform.default_token,
+        associated_token::authority = platform
+    )]
+    pub platform_token: Account<'info, TokenAccount>,
     /// CHECK: This account receives rent from closing escrow token account
     #[account(mut)]
     pub sender: UncheckedAccount<'info>,
     pub token_program: Program<'info, Token>,
+    pub associated_token_program: Program<'info, AssociatedToken>,
 }
 
 /// Context for creating a new carrier account
@@ -264,7 +359,12 @@ pub struct Platform {
     pub fee_rate: u16,
     /// Total number of packages registered on the platform
     pub total_packages: u64,
+    /// Default reputation increase per delivery
     pub reputation_increase: u8,
+    /// Default token mint for payments
+    pub default_token: Pubkey,
+    /// List of allowed token mints for payments
+    pub allowed_tokens: Vec<Pubkey>,
 }
 
 /// Package account state
@@ -368,16 +468,30 @@ pub enum ErrorCode {
     /// Package price is invalid (zero or negative)
     #[msg("Invalid price")]
     InvalidPrice,
+    /// Escrow balance is insufficient
     #[msg("Insufficient escrow balance")]
     InsufficientEscrowBalance,
+    /// Escrow account is invalid
     #[msg("Invalid escrow account")]
     InvalidEscrowAccount,
+    /// Platform is already initialized
     #[msg("Platform already initialized")]
     AlreadyInitialized,
+    /// Fee rate is invalid
     #[msg("Invalid fee rate")]
     InvalidFeeRate,
+    /// Reputation value is invalid
     #[msg("Invalid reputation")]
     InvalidReputation,
+    /// Token amount is invalid
+    #[msg("Invalid token amount")]
+    InvalidAmount,
+    /// Sender's token balance is insufficient
+    #[msg("Insufficient token balance")]
+    InsufficientBalance,
+    /// Token mint is not allowed
+    #[msg("Token mint not allowed")]
+    TokenNotAllowed,
 }
 
 #[event]

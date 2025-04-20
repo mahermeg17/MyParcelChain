@@ -3,6 +3,7 @@ import { Program } from "@coral-xyz/anchor";
 import { ParcelchainDapp } from "../target/types/parcelchain_dapp";
 import { SystemProgram, LAMPORTS_PER_SOL, PublicKey } from "@solana/web3.js";
 import { assert } from "chai";
+import { TOKEN_PROGRAM_ID, createMint, getOrCreateAssociatedTokenAccount, mintTo } from "@solana/spl-token";
 
 describe("parcelchain-dapp", () => {
   const provider = anchor.AnchorProvider.env();
@@ -14,12 +15,18 @@ describe("parcelchain-dapp", () => {
   // Store keypairs that will be used across tests
   let carrier: anchor.web3.Keypair;
   let carrierAccount: PublicKey;
+  let defaultToken: PublicKey;
+  let senderTokenAccount: PublicKey;
+  let escrowTokenAccount: PublicKey;
+  let carrierTokenAccount: PublicKey;
+  let platformTokenAccount: PublicKey;
 
   // Derive platform PDA using the same seed as the Rust program
   const [platform] = PublicKey.findProgramAddressSync(
     [Buffer.from("platform")],
     programId
   );
+
   const authority = provider.wallet.publicKey;
 
   // Fund platform account with SOL and initialize it
@@ -36,12 +43,22 @@ describe("parcelchain-dapp", () => {
       lastValidBlockHeight: latestBlockhash.lastValidBlockHeight,
     });
 
-    // Initialize platform
+    // Create default token mint
+    defaultToken = await createMint(
+      provider.connection,
+      provider.wallet.payer,
+      provider.wallet.publicKey,
+      null,
+      9
+    );
+
+    // Initialize platform with default token
     const tx = await program.methods
       .initialize()
       .accounts({
         platform: platform,
         authority: authority,
+        defaultToken: defaultToken,
         systemProgram: SystemProgram.programId,
       })
       .rpc();
@@ -73,6 +90,12 @@ describe("parcelchain-dapp", () => {
       0,
       "Initial total packages should be 0"
     );
+
+    // Verify default token
+    assert.ok(
+      platformAccount.defaultToken.equals(defaultToken),
+      "Default token should be set"
+    );
   });
 
   it("Registers a package", async () => {
@@ -91,10 +114,6 @@ describe("parcelchain-dapp", () => {
       programId
     );
 
-    console.log("Platform signer:", platform.toString());
-    console.log("Shipper signer:", shipper.publicKey.toString());
-    console.log("Package signer:", packageAccount.toString());
-
     // Fund accounts with SOL
     const shipperAirdropSig = await provider.connection.requestAirdrop(
       shipper.publicKey,
@@ -103,16 +122,6 @@ describe("parcelchain-dapp", () => {
     const latestBlockhash = await provider.connection.getLatestBlockhash();
     await provider.connection.confirmTransaction({
       signature: shipperAirdropSig,
-      blockhash: latestBlockhash.blockhash,
-      lastValidBlockHeight: latestBlockhash.lastValidBlockHeight,
-    });
-
-    const recipientAirdropSig = await provider.connection.requestAirdrop(
-      recipient.publicKey,
-      LAMPORTS_PER_SOL
-    );
-    await provider.connection.confirmTransaction({
-      signature: recipientAirdropSig,
       blockhash: latestBlockhash.blockhash,
       lastValidBlockHeight: latestBlockhash.lastValidBlockHeight,
     });
@@ -189,8 +198,14 @@ describe("parcelchain-dapp", () => {
       programId
     );
 
-    console.log("Carrier signer:", carrier.publicKey.toString());
-    console.log("Carrier account:", carrierAccount.toString());
+    // Create carrier token account
+    carrierTokenAccount = await getOrCreateAssociatedTokenAccount(
+      provider.connection,
+      provider.wallet.payer,
+      defaultToken,
+      carrierAccount,
+      true
+    );
 
     // Fund carrier account with SOL
     const carrierAirdropSig = await provider.connection.requestAirdrop(
@@ -205,10 +220,6 @@ describe("parcelchain-dapp", () => {
     });
 
     // Create carrier
-    console.log("Attempting to create carrier with account:", carrierAccount.toString());
-    console.log("Using authority:", carrier.publicKey.toString());
-    console.log("Program ID:", programId.toString());
-    
     const tx = await program.methods
       .createCarrier(100) // initial reputation
       .accounts({
@@ -263,10 +274,6 @@ describe("parcelchain-dapp", () => {
       ],
       programId
     );
-
-    console.log("Attempting to accept package with carrier:", carrier.publicKey.toString());
-    console.log("Package account:", packageAccount.toString());
-    console.log("Carrier account:", carrierAccount.toString());
 
     // Accept the package delivery
     const tx = await program.methods
