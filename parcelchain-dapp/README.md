@@ -1,22 +1,21 @@
 # ParcelChain DApp
 
-A decentralized application for package delivery management on the Solana blockchain.
+A decentralized application built on Solana for managing package deliveries with escrow functionality.
 
 ## Features
 
 - Package registration and tracking
-- Carrier management and delivery assignment
-- Escrow-based payment system
+- Carrier management with reputation system
+- SOL-based escrow system for secure payments
 - Platform fee management
-- Secure delivery completion with payment distribution
+- Smart contract-based delivery verification
 
 ## Prerequisites
 
 - Node.js (v16 or later)
-- Yarn package manager
+- Rust (latest stable)
 - Solana CLI tools
-- Anchor framework (v0.30.1)
-- Rust (latest stable version)
+- Anchor framework
 
 ## Installation
 
@@ -28,7 +27,7 @@ cd parcelchain-dapp
 
 2. Install dependencies:
 ```bash
-yarn install
+npm install
 ```
 
 3. Build the program:
@@ -36,63 +35,88 @@ yarn install
 anchor build
 ```
 
-## Development
+4. Deploy the program:
+```bash
+anchor deploy
+```
 
-### Project Structure
+## Project Structure
 
 ```
 parcelchain-dapp/
-├── programs/
+├── programs/              # Rust program source code
 │   └── parcelchain-dapp/
 │       ├── src/
-│       │   ├── lib.rs           # Main program logic
-│       │   └── state/
-│       │       ├── mod.rs       # State module exports
-│       │       ├── carrier.rs   # Carrier account structure
-│       │       ├── package.rs   # Package account structure
-│       │       ├── platform.rs  # Platform account structure
-│       │       └── escrow.rs    # Escrow account structure
-│       └── Cargo.toml
-├── tests/
-│   └── parcelchain-dapp.ts      # Test suite
-├── Anchor.toml                   # Anchor configuration
-└── package.json                  # Node.js dependencies
+│       │   ├── lib.rs     # Main program logic
+│       │   ├── state.rs   # Program state definitions
+│       │   └── errors.rs  # Custom error definitions
+│       └── Cargo.toml     # Rust dependencies
+├── tests/                 # Test files
+│   └── parcelchain-dapp.ts
+├── target/               # Build output
+├── Anchor.toml          # Anchor configuration
+└── package.json         # Node.js dependencies
 ```
 
-### Key Components
+## Key Components
 
-1. **Package Management**
-   - Register packages with details (dimensions, weight, etc.)
-   - Track package status (registered, in-transit, delivered)
-   - Assign carriers to packages
+### Package Management
+- Register packages with dimensions and weight
+- Track package status (Registered, InTransit, Delivered)
+- Assign carriers to packages
 
-2. **Carrier System**
-   - Create carrier accounts
-   - Accept delivery assignments
-   - Complete deliveries and receive payments
+### Carrier System
+- Create carrier accounts with reputation
+- Track completed deliveries
+- Manage carrier performance
 
-3. **Escrow System**
-   - Secure payment handling during delivery
-   - Automatic payment distribution upon delivery completion
-   - Platform fee collection
+### Escrow System
+- Create escrow accounts for package payments
+- Fund escrow with SOL
+- Release funds upon successful delivery
+- Handle platform fees
 
-4. **Platform Management**
-   - Set and update platform fees
-   - Manage platform authority
+### Platform Management
+- Initialize platform with default token
+- Configure platform fee rates
+- Track total packages
 
-### Testing
+## Testing
 
 Run the test suite:
 ```bash
 anchor test
 ```
 
-## Configuration
+The test suite includes:
+- Platform initialization
+- Package registration
+- Carrier creation
+- Package delivery acceptance
+- Escrow creation and management
 
-The project uses the following versions:
-- Anchor: 0.30.1
-- Solana Program: 1.18.26
-- Node.js: v16 or later
+## Smart Contract Architecture
+
+The program uses Program Derived Addresses (PDAs) for:
+- Platform account
+- Package accounts
+- Carrier accounts
+- Escrow accounts
+
+## Security Features
+
+- Rent exemption handling
+- Proper account validation
+- Secure fund transfers
+- Reputation-based carrier system
+
+## Contributing
+
+1. Fork the repository
+2. Create your feature branch
+3. Commit your changes
+4. Push to the branch
+5. Create a Pull Request
 
 ## License
 
