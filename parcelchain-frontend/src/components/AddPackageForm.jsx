@@ -106,8 +106,8 @@ const AddPackageForm = ({ program, programID, provider, platformPDA, wallet, set
       const [packagePDA] = PublicKey.findProgramAddressSync(
         [
           Buffer.from("package"),
-          platformPDA.toBuffer(),
           Buffer.from(formData.tracking_number),
+          platformPDA.toBuffer()
         ],
         program.programId
       );
