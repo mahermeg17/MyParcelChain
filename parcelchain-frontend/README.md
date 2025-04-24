@@ -1,3 +1,11 @@
+intialize platform
+
+Transaction successful! Signature: 4HziKJd2EscYhc5eZwbt4FSCvnMSz76z84MXkHs8znACSwaSNmyFc3eiQLojQmNCnytQKTsKpgc9oR6eB1E64pRN
+
+
+
+
+
 # React + Vite
 
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
