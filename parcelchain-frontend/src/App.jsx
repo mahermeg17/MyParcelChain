@@ -11,7 +11,7 @@ import { SystemProgram, PublicKey } from "@solana/web3.js";
 import AddPackageForm from './components/AddPackageForm';
 import Navigation from './components/Navigation';
 import MyPackages from './components/MyPackages';
-import PackageList from './components/PackageList';
+import AllPackages from './components/AllPackages';
 
 function App() {
   const { program } = useAnchor();
@@ -146,7 +146,7 @@ function App() {
         
         {activeSection === 'all' && (
           <div className="all-packages-section">
-            <PackageList packages={allPackages} title="All Packages" />
+            <AllPackages />
           </div>
         )}
       </div>
