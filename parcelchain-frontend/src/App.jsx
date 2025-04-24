@@ -8,6 +8,10 @@ import { useWallet } from "@solana/wallet-adapter-react";
 import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
 import { SystemProgram, PublicKey } from "@solana/web3.js";
 
+import AddPackageForm from './components/AddPackageForm';
+import Navigation from './components/Navigation';
+import PackageList from './components/PackageList';
+
 function App() {
   const { program } = useAnchor();
   const { publicKey, connected } = useWallet();
@@ -15,6 +19,9 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [txSignature, setTxSignature] = useState(null);
   const [isPlatformInitialized, setIsPlatformInitialized] = useState(false);
+  const [activeSection, setActiveSection] = useState('add');
+  const [myPackages, setMyPackages] = useState([]);
+  const [allPackages, setAllPackages] = useState([]);
 
   // Check if platform is initialized
   useEffect(() => {
@@ -86,6 +93,65 @@ function App() {
     }
   };
 
+  const renderInitializationView = () => (
+    <div className="platform-status">
+      <p>Platform Status: {isPlatformInitialized ? 'Initialized' : 'Not Initialized'}</p>
+      {!isPlatformInitialized && (
+        <button
+          onClick={handleAction}
+          disabled={loading}
+          className={`action-button ${loading ? 'loading' : ''}`}
+        >
+          {loading ? 'Processing...' : 'Initialize Platform'}
+        </button>
+      )}
+    </div>
+  );
+
+  const renderMainView = () => (
+    <div className="main-view">
+      <Navigation activeSection={activeSection} setActiveSection={setActiveSection} />
+
+      <div className="section-content">
+        {activeSection === 'add' && (
+          <div className="add-package-section">
+            <h2>Add New Package</h2>
+            <AddPackageForm
+              program={program}
+              programID={program.programId}
+              provider={program.provider}
+              platformPDA={PublicKey.findProgramAddressSync(
+                [Buffer.from("platform")],
+                program.programId
+              )[0]}
+              packagePDA={PublicKey.findProgramAddressSync(
+                [Buffer.from("package"), publicKey.toBuffer()],
+                program.programId
+              )[0]}
+              wallet={{ publicKey }}
+              setMessage={(message, type) => {
+                if (type === 'error') setError(message);
+                else setTxSignature(message);
+              }}
+            />
+          </div>
+        )}
+        
+        {activeSection === 'my' && (
+          <div className="my-packages-section">
+            <PackageList packages={myPackages} title="My Packages" />
+          </div>
+        )}
+        
+        {activeSection === 'all' && (
+          <div className="all-packages-section">
+            <PackageList packages={allPackages} title="All Packages" />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
   return (
     <div className="app-container">
       <header>
@@ -106,18 +172,11 @@ function App() {
           </div>
         )}
 
-        {connected && (
-          <div className="platform-status">
-            <p>Platform Status: {isPlatformInitialized ? 'Initialized' : 'Not Initialized'}</p>
-            {!isPlatformInitialized && (
-              <button
-                onClick={handleAction}
-                disabled={loading}
-                className={`action-button ${loading ? 'loading' : ''}`}
-              >
-                {loading ? 'Processing...' : 'Initialize Platform'}
-              </button>
-            )}
+        {connected ? (
+          isPlatformInitialized ? renderMainView() : renderInitializationView()
+        ) : (
+          <div className="connect-wallet-message">
+            Please connect your wallet to continue
           </div>
         )}
       </main>

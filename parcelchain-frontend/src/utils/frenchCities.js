@@ -1,0 +1,55 @@
+export const frenchCities = [
+  { postalCode: '75001', city: 'Paris 1er' },
+  { postalCode: '75002', city: 'Paris 2ème' },
+  { postalCode: '75003', city: 'Paris 3ème' },
+  { postalCode: '75004', city: 'Paris 4ème' },
+  { postalCode: '75005', city: 'Paris 5ème' },
+  { postalCode: '75006', city: 'Paris 6ème' },
+  { postalCode: '75007', city: 'Paris 7ème' },
+  { postalCode: '75008', city: 'Paris 8ème' },
+  { postalCode: '75009', city: 'Paris 9ème' },
+  { postalCode: '75010', city: 'Paris 10ème' },
+  { postalCode: '75011', city: 'Paris 11ème' },
+  { postalCode: '75012', city: 'Paris 12ème' },
+  { postalCode: '75013', city: 'Paris 13ème' },
+  { postalCode: '75014', city: 'Paris 14ème' },
+  { postalCode: '75015', city: 'Paris 15ème' },
+  { postalCode: '75016', city: 'Paris 16ème' },
+  { postalCode: '75017', city: 'Paris 17ème' },
+  { postalCode: '75018', city: 'Paris 18ème' },
+  { postalCode: '75019', city: 'Paris 19ème' },
+  { postalCode: '75020', city: 'Paris 20ème' },
+  { postalCode: '13001', city: 'Marseille 1er' },
+  { postalCode: '13002', city: 'Marseille 2ème' },
+  { postalCode: '13003', city: 'Marseille 3ème' },
+  { postalCode: '13004', city: 'Marseille 4ème' },
+  { postalCode: '13005', city: 'Marseille 5ème' },
+  { postalCode: '13006', city: 'Marseille 6ème' },
+  { postalCode: '13007', city: 'Marseille 7ème' },
+  { postalCode: '13008', city: 'Marseille 8ème' },
+  { postalCode: '13009', city: 'Marseille 9ème' },
+  { postalCode: '13010', city: 'Marseille 10ème' },
+  { postalCode: '13011', city: 'Marseille 11ème' },
+  { postalCode: '13012', city: 'Marseille 12ème' },
+  { postalCode: '13013', city: 'Marseille 13ème' },
+  { postalCode: '13014', city: 'Marseille 14ème' },
+  { postalCode: '13015', city: 'Marseille 15ème' },
+  { postalCode: '13016', city: 'Marseille 16ème' },
+  { postalCode: '69001', city: 'Lyon 1er' },
+  { postalCode: '69002', city: 'Lyon 2ème' },
+  { postalCode: '69003', city: 'Lyon 3ème' },
+  { postalCode: '69004', city: 'Lyon 4ème' },
+  { postalCode: '69005', city: 'Lyon 5ème' },
+  { postalCode: '69006', city: 'Lyon 6ème' },
+  { postalCode: '69007', city: 'Lyon 7ème' },
+  { postalCode: '69008', city: 'Lyon 8ème' },
+  { postalCode: '69009', city: 'Lyon 9ème' },
+  // Add more cities as needed
+];
+
+export const generateTrackingNumber = () => {
+  const prefix = 'FR';
+  const random = Math.random().toString(36).substring(2, 10).toUpperCase();
+  const timestamp = Date.now().toString(36).toUpperCase();
+  return `${prefix}${random}${timestamp}`;
+}; 
