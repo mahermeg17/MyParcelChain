@@ -146,6 +146,7 @@ const AddPackageForm = ({ program, programID, provider, platformPDA, onPackageAd
             const packageId = (platformAccount.totalPackages.toNumber() + 1) % 256; // Ensure it's a u8
             console.log('Using packageId:', packageId);
 
+            // Derive package PDA using the same seeds as the Rust program
             const [packagePDA] = PublicKey.findProgramAddressSync(
                 [
                     Buffer.from('package'),
@@ -156,6 +157,7 @@ const AddPackageForm = ({ program, programID, provider, platformPDA, onPackageAd
             );
             console.log('Package PDA:', packagePDA.toString());
             console.log('Platform PDA:', platformPDA.toString());
+            console.log('Package ID:', packageId);
 
             console.log('Preparing transaction...');
             console.log('Program methods:', program.methods);

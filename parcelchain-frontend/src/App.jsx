@@ -10,6 +10,7 @@ import { SystemProgram, PublicKey } from "@solana/web3.js";
 
 import AddPackageForm from './components/AddPackageForm';
 import Navigation from './components/Navigation';
+import MyPackages from './components/MyPackages';
 import PackageList from './components/PackageList';
 
 function App() {
@@ -139,7 +140,7 @@ function App() {
         
         {activeSection === 'my' && (
           <div className="my-packages-section">
-            <PackageList packages={myPackages} title="My Packages" />
+            <MyPackages />
           </div>
         )}
         
