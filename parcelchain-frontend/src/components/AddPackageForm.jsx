@@ -141,75 +141,89 @@ const AddPackageForm = ({ program, programID, provider, platformPDA, onPackageAd
             }
 
             console.log('Creating package account...');
+            // Get the current total packages count from the platform account
+            const platformAccount = await program.account.platform.fetch(platformPDA);
+            const packageId = platformAccount.totalPackages.toNumber() + 1;
+            console.log('Using packageId:', packageId);
+
             const [packagePDA] = PublicKey.findProgramAddressSync(
                 [
                     Buffer.from('package'),
-                    publicKey.toBuffer(),
-                    Buffer.from([1]) // packageId = 1
+                    platformPDA.toBuffer(),
+                    Buffer.from([packageId])
                 ],
                 programID
             );
             console.log('Package PDA:', packagePDA.toString());
+            console.log('Platform PDA:', platformPDA.toString());
 
             console.log('Preparing transaction...');
             console.log('Program methods:', program.methods);
             console.log('Program IDL:', program.idl);
             
-            const tx = await program.methods
-                .registerPackage(
-                    formData.description,
-                    new anchor.BN(weight),
-                    [new anchor.BN(length), new anchor.BN(width), new anchor.BN(height)],
-                    new anchor.BN(0), // price (u64)
-                    new anchor.BN(1)  // packageId (u8)
-                )
-                .accounts({
-                    package: packagePDA,
-                    sender: publicKey,
-                    platform: platformPDA,
-                    systemProgram: SystemProgram.programId
-                })
-                .rpc();
+            try {
+                const tx = await program.methods
+                    .registerPackage(
+                        formData.description,
+                        new anchor.BN(weight),
+                        [new anchor.BN(length), new anchor.BN(width), new anchor.BN(height)],
+                        new anchor.BN(0), // price (u64)
+                        new anchor.BN(1)  // packageId (u8)
+                    )
+                    .accounts({
+                        package: packagePDA,
+                        sender: publicKey,
+                        platform: platformPDA,
+                        systemProgram: SystemProgram.programId
+                    })
+                    .rpc();
 
-            console.log('Transaction submitted:', tx);
-            console.log('Waiting for confirmation...');
+                console.log('Transaction submitted:', tx);
+                console.log('Waiting for confirmation...');
 
-            // Wait for confirmation
-            const connection = program.provider.connection;
-            const latestBlockHash = await connection.getLatestBlockhash();
-            await connection.confirmTransaction({
-                blockhash: latestBlockHash.blockhash,
-                lastValidBlockHeight: latestBlockHash.lastValidBlockHeight,
-                signature: tx
-            });
+                // Wait for confirmation
+                const connection = program.provider.connection;
+                const latestBlockHash = await connection.getLatestBlockhash();
+                await connection.confirmTransaction({
+                    blockhash: latestBlockHash.blockhash,
+                    lastValidBlockHeight: latestBlockHash.lastValidBlockHeight,
+                    signature: tx
+                });
 
-            console.log('Transaction confirmed!');
-            console.log('Fetching created package...');
+                console.log('Transaction confirmed!');
+                console.log('Fetching created package...');
 
-            // Fetch the created package to verify
-            const createdPackage = await program.account.package.fetch(packagePDA);
-            console.log('Created package:', createdPackage);
+                // Fetch the created package to verify
+                const createdPackage = await program.account.package.fetch(packagePDA);
+                console.log('Created package:', createdPackage);
 
-            setMessageState({
-                text: `Package registered successfully! Transaction: ${tx}`,
-                type: 'success'
-            });
-            onPackageAdded();
+                setMessageState({
+                    text: `Package registered successfully! Transaction: ${tx}`,
+                    type: 'success'
+                });
+                onPackageAdded();
 
-            // Reset form with new tracking number
-            setFormData({
-                tracking_number: generateTrackingNumber(),
-                description: '',
-                weight: '',
-                dimensions: {
-                    length: '',
-                    width: '',
-                    height: ''
-                },
-                origin: '',
-                destination: '',
-                status: 'InTransit'
-            });
+                // Reset form with new tracking number
+                setFormData({
+                    tracking_number: generateTrackingNumber(),
+                    description: '',
+                    weight: '',
+                    dimensions: {
+                        length: '',
+                        width: '',
+                        height: ''
+                    },
+                    origin: '',
+                    destination: '',
+                    status: 'InTransit'
+                });
+            } catch (error) {
+                console.error('Transaction error:', error);
+                if (error.logs) {
+                    console.error('Program logs:', error.logs);
+                }
+                throw error;
+            }
         } catch (error) {
             console.error('Detailed error:', {
                 message: error.message,
