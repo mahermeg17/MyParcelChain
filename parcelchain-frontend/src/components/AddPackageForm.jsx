@@ -143,7 +143,7 @@ const AddPackageForm = ({ program, programID, provider, platformPDA, onPackageAd
             console.log('Creating package account...');
             // Get the current total packages count from the platform account
             const platformAccount = await program.account.platform.fetch(platformPDA);
-            const packageId = platformAccount.totalPackages.toNumber() + 1;
+            const packageId = (platformAccount.totalPackages.toNumber() + 1) % 256; // Ensure it's a u8
             console.log('Using packageId:', packageId);
 
             const [packagePDA] = PublicKey.findProgramAddressSync(
@@ -168,7 +168,7 @@ const AddPackageForm = ({ program, programID, provider, platformPDA, onPackageAd
                         new anchor.BN(weight),
                         [new anchor.BN(length), new anchor.BN(width), new anchor.BN(height)],
                         new anchor.BN(0), // price (u64)
-                        new anchor.BN(1)  // packageId (u8)
+                        new anchor.BN(packageId)  // packageId (u8)
                     )
                     .accounts({
                         package: packagePDA,
@@ -193,9 +193,25 @@ const AddPackageForm = ({ program, programID, provider, platformPDA, onPackageAd
                 console.log('Transaction confirmed!');
                 console.log('Fetching created package...');
 
-                // Fetch the created package to verify
-                const createdPackage = await program.account.package.fetch(packagePDA);
-                console.log('Created package:', createdPackage);
+                // Add retry mechanism for fetching the package
+                let retries = 3;
+                let createdPackage = null;
+                
+                while (retries > 0) {
+                    try {
+                        createdPackage = await program.account.package.fetch(packagePDA);
+                        console.log('Created package:', createdPackage);
+                        break;
+                    } catch (error) {
+                        retries--;
+                        if (retries === 0) {
+                            console.error('Failed to fetch package after retries:', error);
+                            throw error;
+                        }
+                        console.log(`Retrying to fetch package (${retries} attempts left)...`);
+                        await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds between retries
+                    }
+                }
 
                 setMessageState({
                     text: `Package registered successfully! Transaction: ${tx}`,
